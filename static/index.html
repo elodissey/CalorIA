@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CalorIA — Suivi des calories</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- En-tête : titre et navigation par date -->
+    <header class="header">
+      <div>
+        <h1>CalorIA</h1>
+        <p class="subtitle">Suivi simple des calories par jour et par menu</p>
+      </div>
+      <div class="date-nav">
+        <button id="prev-day" type="button" class="btn btn-secondary" title="Jour précédent">◀</button>
+        <input id="date-picker" type="date" />
+        <button id="next-day" type="button" class="btn btn-secondary" title="Jour suivant">▶</button>
+        <button id="today-btn" type="button" class="btn btn-secondary">Aujourd'hui</button>
+      </div>
+    </header>
+
+    <!-- Bandeau récapitulatif de la journée -->
+    <section class="summary-card">
+      <div class="summary-main">
+        <span class="summary-label">Total consommé</span>
+        <div class="summary-total">
+          <strong id="day-total-kcal">0</strong> <span>kcal</span>
+        </div>
+        <span id="goal-status" class="badge">En dessous de l'objectif</span>
+      </div>
+
+      <div class="summary-targets">
+        <div class="target-box target-goal">
+          <div class="target-title">Objectif quotidien</div>
+          <div class="target-value">1 650 – 1 750 kcal / jour</div>
+        </div>
+        <div class="target-box target-ref">
+          <div class="target-title">Repère activité modérée</div>
+          <div class="target-value">1 990 kcal / jour</div>
+          <div id="ref-remaining" class="target-sub">Reste 1 990 kcal</div>
+        </div>
+      </div>
+
+      <!-- Barre de progression visuelle par rapport au repère 1 990 kcal -->
+      <div class="progress-wrapper" title="Zone verte = objectif 1 650 à 1 750 kcal">
+        <div class="progress-track">
+          <div class="progress-goal-zone"></div>
+          <div id="progress-bar" class="progress-bar" style="width: 0%;"></div>
+        </div>
+        <div class="progress-legend">
+          <span>0</span>
+          <span>1 650 – 1 750 (objectif)</span>
+          <span>1 990 (repère)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Zone principale : recherche/ajout à gauche, menus du jour à droite -->
+    <main class="main-grid">
+      <!-- Colonne gauche : recherche + sélection + création manuelle -->
+      <section class="card add-panel">
+        <h2>Ajouter un aliment</h2>
+
+        <!-- Barre de recherche (filtre local + recherche Open Food Facts) -->
+        <form id="search-form" class="search-bar">
+          <input
+            id="search-input"
+            type="text"
+            placeholder="Rechercher un produit (ex: pain, beurre, jambon...)"
+            autocomplete="off"
+          />
+          <button id="off-search-btn" type="submit" class="btn btn-primary">
+            Open Food Facts
+          </button>
+        </form>
+        <p class="hint">
+          Tapez un aliment (ex: <em>pain, ratatouille, tisane...</em>) pour chercher instantanément dans vos favoris et la <strong>table Ciqual (hors ligne)</strong>, ou cliquez sur <strong>Open Food Facts</strong> pour les produits de marque.
+        </p>
+
+        <div id="search-feedback" class="feedback hidden"></div>
+
+        <!-- Liste des résultats (produits locaux + résultats Open Food Facts) -->
+        <div id="results-container" class="results-list"></div>
+
+        <!-- Formulaire affiché quand un produit est sélectionné dans la liste -->
+        <div id="selected-box" class="selected-box hidden">
+          <div class="selected-header">
+            <div>
+              <strong id="selected-name"></strong>
+              <span id="selected-brand" class="muted"></span>
+              <div id="selected-kcal-info" class="muted small"></div>
+            </div>
+            <button id="clear-selected" type="button" class="btn-link">Changer</button>
+          </div>
+
+          <form id="add-entry-form" class="entry-form">
+            <div class="form-row">
+              <label>
+                Menu
+                <select id="meal-select">
+                  <option value="Petit-déjeuner">Petit-déjeuner</option>
+                  <option value="Déjeuner">Déjeuner</option>
+                  <option value="Dîner">Dîner</option>
+                  <option value="Collation">Collation</option>
+                </select>
+              </label>
+
+              <label>
+                Quantité
+                <input id="qty-input" type="number" step="any" min="0.01" value="100" required />
+              </label>
+
+              <label>
+                Unité
+                <select id="unit-select">
+                  <option value="g">grammes (g)</option>
+                  <option value="portion">portion(s)</option>
+                </select>
+              </label>
+            </div>
+
+            <!-- Champ affiché si l'utilisatrice choisit "portion" et qu'aucun poids n'est enregistré -->
+            <div id="portion-weight-row" class="form-row hidden">
+              <label class="full-width">
+                Poids d'1 portion (en grammes) — sera mémorisé pour ce produit
+                <input id="custom-portion-grams" type="number" step="any" min="0.1" placeholder="Ex: 30 pour une tranche" />
+              </label>
+            </div>
+
+            <div class="preview-row">
+              <span id="calc-preview">Aperçu : 0 kcal</span>
+              <button type="submit" class="btn btn-success">Ajouter au menu</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Création manuelle d'un aliment (si absent d'Open Food Facts) -->
+        <details id="manual-details" class="manual-box">
+          <summary>+ Créer un aliment manuellement</summary>
+          <form id="manual-food-form" class="manual-form">
+            <label>
+              Nom de l'aliment *
+              <input id="manual-name" type="text" placeholder="Ex: Pain de campagne" required />
+            </label>
+            <label>
+              Marque / note (optionnel)
+              <input id="manual-brand" type="text" placeholder="Ex: Boulangerie" />
+            </label>
+            <label>
+              Calories pour 100g (kcal) *
+              <input id="manual-kcal" type="number" step="any" min="0" placeholder="Ex: 265" required />
+            </label>
+            <div class="form-row">
+              <label>
+                Nom d'une portion (optionnel)
+                <input id="manual-portion-name" type="text" placeholder="Ex: tranche" />
+              </label>
+              <label>
+                Poids d'1 portion en g (optionnel)
+                <input id="manual-portion-grams" type="number" step="any" min="0.1" placeholder="Ex: 30" />
+              </label>
+            </div>
+            <button type="submit" class="btn btn-primary">Enregistrer l'aliment</button>
+          </form>
+        </details>
+      </section>
+
+      <!-- Colonne droite : les 4 menus fixes de la journée -->
+      <section class="meals-column">
+        <div id="meals-container" class="meals-grid"></div>
+      </section>
+    </main>
+
+    <!-- Historique des journées précédentes -->
+    <section class="card history-card">
+      <h2>Historique des journées enregistrées</h2>
+      <div id="history-list" class="history-list"></div>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

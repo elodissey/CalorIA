@@ -1,0 +1,568 @@
+/* style.css — Mise en page simple et lisible pour CalorIA */
+
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --success: #16a34a;
+  --success-hover: #15803d;
+  --warning: #d97706;
+  --danger: #dc2626;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+}
+
+/* En-tête */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.date-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-nav input[type="date"] {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: var(--card);
+}
+
+/* Cartes génériques */
+.card,
+.summary-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* Bandeau récapitulatif */
+.summary-card {
+  margin-bottom: 18px;
+}
+
+.summary-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.summary-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.summary-total {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.summary-total span {
+  font-size: 1rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.badge.in-goal {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.badge.above-goal {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.badge.above-ref {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.summary-targets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.target-box {
+  background: #f9fafb;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.target-goal {
+  border-left: 4px solid var(--success);
+}
+
+.target-ref {
+  border-left: 4px solid var(--primary);
+}
+
+.target-title {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.target-value {
+  font-weight: 700;
+  font-size: 1.02rem;
+}
+
+.target-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Barre de progression (repère 1990 kcal, zone verte 1650-1750) */
+.progress-track {
+  position: relative;
+  height: 14px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* 1650/1990 = 82.9% ; 1750/1990 = 87.9% */
+.progress-goal-zone {
+  position: absolute;
+  left: 82.9%;
+  width: 5%;
+  top: 0;
+  bottom: 0;
+  background: rgba(22, 163, 74, 0.35);
+  z-index: 1;
+}
+
+.progress-bar {
+  position: relative;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.25s ease;
+  z-index: 2;
+}
+
+.progress-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Grille principale : ajout à gauche, menus à droite */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .main-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+/* Recherche & liste de produits */
+.search-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.search-bar input {
+  flex: 1;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+.hint {
+  margin: 6px 0 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.feedback {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  margin-bottom: 10px;
+  background: #f3f4f6;
+}
+
+.feedback.error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.results-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.results-list:empty {
+  display: none;
+}
+
+.result-group-title {
+  background: #f3f4f6;
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.result-item {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  border: none;
+  border-top: 1px solid var(--border);
+  padding: 9px 11px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.result-item:hover {
+  background: #eff6ff;
+}
+
+.result-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.result-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.result-kcal {
+  font-weight: 700;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  color: var(--primary);
+}
+
+/* Zone produit sélectionné */
+.selected-box {
+  background: #f8fafc;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.selected-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+label.full-width {
+  grid-column: 1 / -1;
+}
+
+input,
+select {
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.92rem;
+  background: #fff;
+}
+
+.preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+#calc-preview {
+  font-weight: 700;
+  color: var(--success);
+}
+
+/* Ajout manuel */
+.manual-box {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.manual-box summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--primary);
+}
+
+.manual-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Boutons */
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 13px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: #f3f4f6;
+}
+
+.btn-success {
+  background: var(--success);
+  color: #fff;
+}
+
+.btn-success:hover {
+  background: var(--success-hover);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* Cartes des 4 menus */
+.meals-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.meal-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.meal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.meal-title {
+  font-weight: 700;
+  font-size: 1.02rem;
+}
+
+.meal-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meal-total {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+
+.entry-qty {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.btn-delete {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.btn-delete:hover {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+.empty-msg {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-style: italic;
+}
+
+/* Historique */
+.history-card {
+  margin-top: 18px;
+}
+
+.history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-chip {
+  border: 1px solid var(--border);
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 7px 11px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+
+.history-chip:hover {
+  border-color: var(--primary);
+  background: #eff6ff;
+}
+
+.history-chip.active {
+  border-color: var(--primary);
+  background: #dbeafe;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 0.82rem;
+}
+
+.hidden {
+  display: none !important;
+}

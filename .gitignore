@@ -1,0 +1,27 @@
+# Base de données personnelle (contient votre historique de repas et favoris)
+caloria.db
+caloria.db-shm
+caloria.db-wal
+*.db
+*.sqlite
+*.sqlite3
+
+# Fichiers compilés Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements virtuels et variables d'environnement éventuelles
+.venv/
+venv/
+.env
+.env.*
+
+# Fichiers système macOS
+.DS_Store
+
+# Journal de bord local
+Status.md
+
+# Table Ciqual téléchargée localement (non incluse dans le dépôt Git)
+ciqual_2025.xlsx
