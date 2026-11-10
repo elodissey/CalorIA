@@ -8,17 +8,23 @@
 </head>
 <body>
   <div class="container">
-    <!-- En-tête : titre et navigation par date -->
+    <!-- En-tête : titre, utilisateur connecté et navigation par date -->
     <header class="header">
       <div>
         <h1>CalorIA</h1>
         <p class="subtitle">Suivi simple des calories par jour et par menu</p>
       </div>
-      <div class="date-nav">
-        <button id="prev-day" type="button" class="btn btn-secondary" title="Jour précédent">◀</button>
-        <input id="date-picker" type="date" />
-        <button id="next-day" type="button" class="btn btn-secondary" title="Jour suivant">▶</button>
-        <button id="today-btn" type="button" class="btn btn-secondary">Aujourd'hui</button>
+      <div class="header-right">
+        <div class="user-bar">
+          <span id="current-username" class="user-pill">...</span>
+          <button id="logout-btn" type="button" class="btn btn-secondary btn-sm">Déconnexion</button>
+        </div>
+        <div class="date-nav">
+          <button id="prev-day" type="button" class="btn btn-secondary" title="Jour précédent">◀</button>
+          <input id="date-picker" type="date" />
+          <button id="next-day" type="button" class="btn btn-secondary" title="Jour suivant">▶</button>
+          <button id="today-btn" type="button" class="btn btn-secondary">Aujourd'hui</button>
+        </div>
       </div>
     </header>
 
@@ -35,25 +41,25 @@
       <div class="summary-targets">
         <div class="target-box target-goal">
           <div class="target-title">Objectif quotidien</div>
-          <div class="target-value">1 650 – 1 750 kcal / jour</div>
+          <div id="goal-range-text" class="target-value">1 650 – 1 750 kcal / jour</div>
         </div>
         <div class="target-box target-ref">
-          <div class="target-title">Repère activité modérée</div>
-          <div class="target-value">1 990 kcal / jour</div>
+          <div class="target-title">Repère journalier</div>
+          <div id="ref-kcal-text" class="target-value">1 990 kcal / jour</div>
           <div id="ref-remaining" class="target-sub">Reste 1 990 kcal</div>
         </div>
       </div>
 
-      <!-- Barre de progression visuelle par rapport au repère 1 990 kcal -->
-      <div class="progress-wrapper" title="Zone verte = objectif 1 650 à 1 750 kcal">
+      <!-- Barre de progression visuelle par rapport au repère journalier -->
+      <div class="progress-wrapper">
         <div class="progress-track">
-          <div class="progress-goal-zone"></div>
+          <div id="progress-goal-zone" class="progress-goal-zone"></div>
           <div id="progress-bar" class="progress-bar" style="width: 0%;"></div>
         </div>
         <div class="progress-legend">
           <span>0</span>
-          <span>1 650 – 1 750 (objectif)</span>
-          <span>1 990 (repère)</span>
+          <span id="legend-goal">1 650 – 1 750 (objectif)</span>
+          <span id="legend-ref">1 990 (repère)</span>
         </div>
       </div>
     </section>

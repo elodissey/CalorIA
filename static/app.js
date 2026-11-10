@@ -5,10 +5,10 @@
  * pour afficher les repas du jour, rechercher des produits et calculer les calories.
  */
 
-// Repères caloriques définis pour CalorIA
-const GOAL_MIN = 1650;
-const GOAL_MAX = 1750;
-const REF_KCAL = 1990;
+// Repères caloriques de l'utilisateur connecté (mis à jour via /api/me)
+let GOAL_MIN = 1650;
+let GOAL_MAX = 1750;
+let REF_KCAL = 1990;
 
 // État courant de la page
 let currentDate = getLocalTodayISO();
@@ -18,6 +18,8 @@ let offFoods = [];
 let selectedFood = null;
 
 // Récupération des éléments HTML principaux
+const currentUsernameEl = document.getElementById("current-username");
+const logoutBtn = document.getElementById("logout-btn");
 const datePicker = document.getElementById("date-picker");
 const prevDayBtn = document.getElementById("prev-day");
 const nextDayBtn = document.getElementById("next-day");
@@ -25,8 +27,13 @@ const todayBtn = document.getElementById("today-btn");
 
 const dayTotalEl = document.getElementById("day-total-kcal");
 const goalStatusEl = document.getElementById("goal-status");
+const goalRangeTextEl = document.getElementById("goal-range-text");
+const refKcalTextEl = document.getElementById("ref-kcal-text");
 const refRemainingEl = document.getElementById("ref-remaining");
+const progressGoalZoneEl = document.getElementById("progress-goal-zone");
 const progressBarEl = document.getElementById("progress-bar");
+const legendGoalEl = document.getElementById("legend-goal");
+const legendRefEl = document.getElementById("legend-ref");
 
 const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search-input");
@@ -104,10 +111,14 @@ async function loadDay(dateStr) {
   datePicker.value = currentDate;
 
   const response = await fetch(`/api/day?date=${encodeURIComponent(currentDate)}`);
+  if (response.status === 401) {
+    window.location.href = "/login";
+    return;
+  }
   const data = await response.json();
 
   renderSummary(data.total_kcal || 0);
-  renderMeals(data.menus || []);
+  renderMeals(data.menus || [], data.partner || null);
   loadHistory();
 }
 
@@ -115,7 +126,7 @@ function renderSummary(totalKcal) {
   const rounded = Math.round(totalKcal);
   dayTotalEl.textContent = formatKcal(rounded);
 
-  // Mise à jour du badge d'objectif (1 650 - 1 750 kcal)
+  // Mise à jour du badge d'objectif selon les repères propres à l'utilisateur
   goalStatusEl.className = "badge";
   if (rounded < GOAL_MIN) {
     goalStatusEl.textContent = `Encore ${formatKcal(GOAL_MIN - rounded)} kcal pour atteindre l'objectif`;
@@ -123,14 +134,14 @@ function renderSummary(totalKcal) {
     goalStatusEl.textContent = "Dans l'objectif quotidien !";
     goalStatusEl.classList.add("in-goal");
   } else if (rounded <= REF_KCAL) {
-    goalStatusEl.textContent = "Au-dessus de l'objectif, sous le repère de 1 990 kcal";
+    goalStatusEl.textContent = `Au-dessus de l'objectif, sous le repère de ${formatKcal(REF_KCAL)} kcal`;
     goalStatusEl.classList.add("above-goal");
   } else {
-    goalStatusEl.textContent = "Repère de 1 990 kcal dépassé";
+    goalStatusEl.textContent = `Repère de ${formatKcal(REF_KCAL)} kcal dépassé`;
     goalStatusEl.classList.add("above-ref");
   }
 
-  // Écart par rapport au repère d'activité modérée (1 990 kcal)
+  // Écart par rapport au repère journalier personnel
   const diffRef = REF_KCAL - rounded;
   if (diffRef >= 0) {
     refRemainingEl.textContent = `Reste ${formatKcal(diffRef)} kcal par rapport au repère`;
@@ -138,12 +149,12 @@ function renderSummary(totalKcal) {
     refRemainingEl.textContent = `Dépassé de ${formatKcal(Math.abs(diffRef))} kcal`;
   }
 
-  // Largeur de la barre de progression sur l'échelle 0 -> 1 990 kcal
+  // Largeur de la barre de progression sur l'échelle 0 -> REF_KCAL
   const pct = Math.min(100, Math.max(0, (rounded / REF_KCAL) * 100));
   progressBarEl.style.width = `${pct.toFixed(1)}%`;
 }
 
-function renderMeals(menus) {
+function renderMeals(menus, partner) {
   mealsContainer.innerHTML = "";
 
   for (const menu of menus) {
@@ -218,6 +229,13 @@ function renderMeals(menus) {
         const kcalEl = document.createElement("strong");
         kcalEl.textContent = `${formatKcal(entry.kcal_calculated)} kcal`;
 
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "btn-edit";
+        editBtn.title = "Modifier la quantité ou le menu";
+        editBtn.textContent = "✎";
+        editBtn.addEventListener("click", () => openInlineEdit(li, entry));
+
         const delBtn = document.createElement("button");
         delBtn.type = "button";
         delBtn.className = "btn-delete";
@@ -226,6 +244,7 @@ function renderMeals(menus) {
         delBtn.addEventListener("click", () => deleteEntry(entry.id));
 
         actions.appendChild(kcalEl);
+        actions.appendChild(editBtn);
         actions.appendChild(delBtn);
 
         li.appendChild(leftInfo);
@@ -236,8 +255,159 @@ function renderMeals(menus) {
       card.appendChild(ul);
     }
 
+    // Section dépliable pour copier aliment par aliment depuis l'autre utilisateur (s'il a saisi ce menu ce jour-là)
+    const partnerEntries =
+      partner && partner.by_menu && partner.by_menu[menu.name]
+        ? partner.by_menu[menu.name]
+        : [];
+    if (partnerEntries.length > 0) {
+      const details = document.createElement("details");
+      details.className = "partner-box";
+
+      const summary = document.createElement("summary");
+      summary.textContent = `Chez ${partner.username} (${partnerEntries.length})`;
+      details.appendChild(summary);
+
+      const pList = document.createElement("ul");
+      pList.className = "partner-list";
+
+      for (const pEntry of partnerEntries) {
+        const pLi = document.createElement("li");
+        pLi.className = "partner-item";
+
+        const pInfo = document.createElement("div");
+        const pName = document.createElement("div");
+        pName.textContent = pEntry.food_brand
+          ? `${pEntry.food_name} (${pEntry.food_brand})`
+          : pEntry.food_name;
+
+        const pQty = document.createElement("div");
+        pQty.className = "entry-qty";
+        const qtyTxt =
+          pEntry.unit === "portion"
+            ? `${pEntry.quantity} portion(s) · ${pEntry.grams_equivalent} g`
+            : `${pEntry.quantity} g`;
+        pQty.textContent = `${qtyTxt} · ${formatKcal(pEntry.kcal_calculated)} kcal`;
+
+        pInfo.appendChild(pName);
+        pInfo.appendChild(pQty);
+
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "btn btn-secondary btn-sm";
+        copyBtn.textContent = "+ Copier";
+        copyBtn.addEventListener("click", () => copyFromPartner(pEntry.id, menu.name, copyBtn));
+
+        pLi.appendChild(pInfo);
+        pLi.appendChild(copyBtn);
+        pList.appendChild(pLi);
+      }
+
+      details.appendChild(pList);
+      card.appendChild(details);
+    }
+
     mealsContainer.appendChild(card);
   }
+}
+
+async function copyFromPartner(sourceEntryId, mealType, btn) {
+  btn.disabled = true;
+  btn.textContent = "Copié !";
+  const response = await fetch("/api/entries/copy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_entry_id: sourceEntryId,
+      entry_date: currentDate,
+      meal_type: mealType,
+    }),
+  });
+  if (response.ok) {
+    loadDay(currentDate);
+  } else {
+    btn.disabled = false;
+    btn.textContent = "+ Copier";
+  }
+}
+
+/** Affiche un petit formulaire en ligne pour changer la quantité ou déplacer vers un autre menu. */
+function openInlineEdit(li, entry) {
+  li.className = "entry-item entry-editing";
+  li.innerHTML = "";
+
+  const title = document.createElement("div");
+  title.className = "edit-title";
+  title.textContent = entry.food_brand
+    ? `${entry.food_name} (${entry.food_brand})`
+    : entry.food_name;
+
+  const form = document.createElement("form");
+  form.className = "edit-inline-form";
+
+  const qtyField = document.createElement("input");
+  qtyField.type = "number";
+  qtyField.step = "any";
+  qtyField.min = "0.01";
+  qtyField.required = true;
+  qtyField.value = String(entry.quantity);
+  qtyField.className = "edit-qty-input";
+
+  const unitLabel = document.createElement("span");
+  unitLabel.className = "muted small";
+  unitLabel.textContent = entry.unit === "portion" ? "portion(s)" : "g";
+
+  const menuDropdown = document.createElement("select");
+  for (const m of ["Petit-déjeuner", "Déjeuner", "Dîner", "Collation"]) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    if (m === entry.meal_type) opt.selected = true;
+    menuDropdown.appendChild(opt);
+  }
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "btn btn-success btn-sm";
+  saveBtn.textContent = "OK";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "btn btn-secondary btn-sm";
+  cancelBtn.textContent = "Annuler";
+  cancelBtn.addEventListener("click", () => loadDay(currentDate));
+
+  form.appendChild(qtyField);
+  form.appendChild(unitLabel);
+  form.appendChild(menuDropdown);
+  form.appendChild(saveBtn);
+  form.appendChild(cancelBtn);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const newQty = parseFloat(qtyField.value);
+    if (!newQty || newQty <= 0) return;
+
+    const response = await fetch(`/api/entries/${entry.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        quantity: newQty,
+        meal_type: menuDropdown.value,
+      }),
+    });
+    if (response.ok) {
+      loadDay(currentDate);
+    } else {
+      const err = await response.json();
+      showFeedback(err.error || "Erreur lors de la modification.", true);
+    }
+  });
+
+  li.appendChild(title);
+  li.appendChild(form);
+  qtyField.focus();
+  qtyField.select();
 }
 
 async function deleteEntry(entryId) {
@@ -545,6 +715,41 @@ manualFoodForm.addEventListener("submit", async (e) => {
   selectFood(data.food);
 });
 
+// Déconnexion
+logoutBtn.addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  window.location.href = "/login";
+});
+
+/** Charge le profil et les repères caloriques de l'utilisateur connecté, puis la journée. */
+async function initApp() {
+  const res = await fetch("/api/me");
+  if (res.status === 401) {
+    window.location.href = "/login";
+    return;
+  }
+  const data = await res.json();
+  const user = data.user;
+
+  GOAL_MIN = Number(user.goal_min) || 1650;
+  GOAL_MAX = Number(user.goal_max) || 1750;
+  REF_KCAL = Number(user.ref_kcal) || 1990;
+
+  currentUsernameEl.textContent = user.username;
+  goalRangeTextEl.textContent = `${formatKcal(GOAL_MIN)} – ${formatKcal(GOAL_MAX)} kcal / jour`;
+  refKcalTextEl.textContent = `${formatKcal(REF_KCAL)} kcal / jour`;
+  legendGoalEl.textContent = `${formatKcal(GOAL_MIN)} – ${formatKcal(GOAL_MAX)} (objectif)`;
+  legendRefEl.textContent = `${formatKcal(REF_KCAL)} (repère)`;
+
+  // Positionne la zone verte de l'objectif sur la barre de progression
+  const leftPct = Math.min(100, Math.max(0, (GOAL_MIN / REF_KCAL) * 100));
+  const widthPct = Math.min(100 - leftPct, Math.max(1, ((GOAL_MAX - GOAL_MIN) / REF_KCAL) * 100));
+  progressGoalZoneEl.style.left = `${leftPct.toFixed(1)}%`;
+  progressGoalZoneEl.style.width = `${widthPct.toFixed(1)}%`;
+
+  loadDay(currentDate);
+  loadLocalFoods("");
+}
+
 // Initialisation au chargement de la page
-loadDay(currentDate);
-loadLocalFoods("");
+initApp();

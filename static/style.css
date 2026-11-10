@@ -503,14 +503,127 @@ select {
   white-space: nowrap;
 }
 
+.btn-edit,
 .btn-delete {
   background: none;
   border: none;
   color: var(--muted);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 6px;
+}
+
+.btn-edit:hover {
+  background: #eff6ff;
+  color: var(--primary);
+}
+
+.entry-editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.edit-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.edit-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.edit-qty-input {
+  width: 82px;
+  padding: 5px 7px;
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 0.82rem;
+}
+
+/* Barre utilisateur et page de connexion */
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-pill {
+  background: #e0f2fe;
+  color: #0369a1;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.login-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 390px;
+}
+
+.login-card h1 {
+  margin: 0 0 4px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* Bloc de partage aliment par aliment depuis l'autre utilisateur */
+.partner-box {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.partner-box summary {
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.partner-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.partner-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: #f8fafc;
+  border-radius: 7px;
+  font-size: 0.86rem;
 }
 
 .btn-delete:hover {

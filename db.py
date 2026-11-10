@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import ciqual
 
-# Chemin complet vers le fichier de base de données, dans le même dossier que ce script
+# Chemin complet vers le fichier de base de données (configurable via CALORIA_DB_PATH pour un serveur)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "caloria.db")
+DB_PATH = os.environ.get("CALORIA_DB_PATH") or os.path.join(BASE_DIR, "caloria.db")
 
 # Les 4 menus fixes validés pour chaque journée
 MENUS_FIXES = ("Petit-déjeuner", "Déjeuner", "Dîner", "Collation")
@@ -25,6 +25,7 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     # Permet d'accéder aux colonnes par leur nom (ex: row["name"]) au lieu d'un index
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -50,12 +51,12 @@ def init_db() -> None:
         )
 
         # Table 2 : Journal des aliments consommés par jour et par menu
-        # On stocke un "instantané" (nom, marque, calories calculées) pour que
-        # l'historique passé reste exact même si on modifie un aliment plus tard.
+        # Chaque ligne appartient à un utilisateur (`user_id`), mais `foods` reste partagé.
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS meal_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER DEFAULT NULL,
                 entry_date TEXT NOT NULL,
                 meal_type TEXT NOT NULL,
                 food_id INTEGER DEFAULT NULL,
@@ -70,7 +71,16 @@ def init_db() -> None:
             """
         )
 
-        # Table 3 : Référentiel officiel français ANSES Ciqual (hors ligne)
+        # Migration douce : si la base existait déjà avant l'ajout de `user_id`, on ajoute la colonne sans rien effacer
+        existing_cols = [r["name"] for r in conn.execute("PRAGMA table_info(meal_entries)").fetchall()]
+        if "user_id" not in existing_cols:
+            conn.execute("ALTER TABLE meal_entries ADD COLUMN user_id INTEGER DEFAULT NULL")
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_user_date ON meal_entries(user_id, entry_date)"
+        )
+
+        # Table 3 : Référentiel officiel français ANSES Ciqual (hors ligne, partagé)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ciqual_foods (
@@ -85,6 +95,187 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_ciqual_search ON ciqual_foods(search_text)"
         )
+
+        # Table 4 : Utilisateurs autorisés (gérés via le script users.py, pas d'inscription publique)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                goal_min INTEGER NOT NULL DEFAULT 1650,
+                goal_max INTEGER NOT NULL DEFAULT 1750,
+                ref_kcal INTEGER NOT NULL DEFAULT 1990,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Table 5 : Sessions de connexion actives
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.commit()
+
+
+# ------------------------------------------------------------------
+# Gestion des utilisateurs et des sessions
+# ------------------------------------------------------------------
+
+def count_users() -> int:
+    """Retourne le nombre de comptes créés."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()
+    return int(row["cnt"]) if row else 0
+
+
+def list_users() -> List[Dict[str, Any]]:
+    """Liste les utilisateurs sans jamais exposer leurs mots de passe."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, username, goal_min, goal_max, ref_kcal, created_at FROM users ORDER BY id ASC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """Récupère un utilisateur complet (avec password_hash) pour vérifier sa connexion."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1",
+            (username.strip(),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    """Récupère les informations publiques d'un utilisateur."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, username, goal_min, goal_max, ref_kcal FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_user(
+    username: str,
+    password_hash: str,
+    goal_min: int = 1650,
+    goal_max: int = 1750,
+    ref_kcal: int = 1990,
+) -> Tuple[Dict[str, Any], int]:
+    """
+    Crée un utilisateur et lui rattache automatiquement d'éventuelles anciennes entrées
+    (`user_id IS NULL`) pour ne jamais perdre de données déjà saisies avant le multi-utilisateurs.
+    Retourne (user_dict, nombre_entrees_rattachees).
+    """
+    clean_name = username.strip()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO users (username, password_hash, goal_min, goal_max, ref_kcal)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (clean_name, password_hash, int(goal_min), int(goal_max), int(ref_kcal)),
+        )
+        user_id = cursor.lastrowid
+        # S'il reste des repas enregistrés avant l'activation des comptes, on les attribue à ce compte
+        adopted = conn.execute(
+            "UPDATE meal_entries SET user_id = ? WHERE user_id IS NULL",
+            (user_id,),
+        ).rowcount
+        conn.commit()
+
+    user = get_user_by_id(user_id)  # type: ignore[arg-type]
+    return user, int(adopted or 0)  # type: ignore[return-value]
+
+
+def update_user_password(username: str, password_hash: str) -> bool:
+    """Met à jour le mot de passe d'un utilisateur existant."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET password_hash = ? WHERE LOWER(username) = LOWER(?)",
+            (password_hash, username.strip()),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_user_goals(username: str, goal_min: int, goal_max: int, ref_kcal: int) -> bool:
+    """Met à jour les objectifs et le repère calorique d'un utilisateur."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE users
+            SET goal_min = ?, goal_max = ?, ref_kcal = ?
+            WHERE LOWER(username) = LOWER(?)
+            """,
+            (int(goal_min), int(goal_max), int(ref_kcal), username.strip()),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def create_session(token: str, user_id: int, expires_at: str) -> None:
+    """Enregistre une session de connexion en base."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, expires_at),
+        )
+        conn.commit()
+
+
+def get_user_by_session(token: str) -> Optional[Dict[str, Any]]:
+    """Retourne l'utilisateur lié au jeton s'il est valide et non expiré."""
+    if not token:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT u.id, u.username, u.goal_min, u.goal_max, u.ref_kcal, s.expires_at
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row:
+            return None
+
+        # Vérifie si la session n'a pas expiré (comparaison ISO UTC)
+        import datetime
+
+        now_iso = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        if row["expires_at"] <= now_iso:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.commit()
+            return None
+
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "goal_min": row["goal_min"],
+            "goal_max": row["goal_max"],
+            "ref_kcal": row["ref_kcal"],
+        }
+
+
+def delete_session(token: str) -> None:
+    """Supprime une session lors de la déconnexion."""
+    if not token:
+        return
+    with get_connection() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
         conn.commit()
 
 
@@ -111,37 +302,77 @@ def import_ciqual_foods(items: List[Tuple[str, str, str, float, str]]) -> int:
     return len(items)
 
 
-def search_ciqual_foods(query: str, limit: int = 25) -> List[Dict[str, Any]]:
+def _word_variants(word: str) -> List[str]:
+    """Renvoie le mot et son singulier simple si le mot finit par 's' ou 'x'."""
+    variants = [word]
+    if len(word) > 3 and word.endswith("s"):
+        variants.append(word[:-1])
+    elif len(word) > 4 and word.endswith("x"):
+        variants.append(word[:-1])
+    return variants
+
+
+def search_ciqual_foods(query: str, limit: int = 40) -> List[Dict[str, Any]]:
     """
-    Recherche dans la table Ciqual hors ligne (sans tenir compte des accents).
-    Si la recherche contient plusieurs mots (ex: 'pain campagne'), tous les mots
-    doivent apparaître dans le nom ou le groupe.
+    Recherche dans la table Ciqual hors ligne (sans accents et tolérante aux pluriels).
+    Si la recherche contient plusieurs mots (ex: 'fruits pommes cuites'), tous les mots
+    doivent apparaître dans le nom ou le groupe, et les aliments dont le nom commence par
+    un mot recherché (ex: 'Pomme, ...') sont classés en premier.
     """
     norm = ciqual.normalize_text(query)
     words = norm.split()
     if not words:
         return []
 
-    where_clauses = " AND ".join("search_text LIKE ?" for _ in words)
-    params: List[Any] = [f"%{w}%" for w in words]
-    # Astuce pour classer les résultats qui commencent par le premier mot en premier
-    params.append(f"{words[0]}%")
-    params.append(limit)
+    clauses: List[str] = []
+    params: List[Any] = []
+    word_variants_list = [_word_variants(w) for w in words]
+
+    for variants in word_variants_list:
+        or_parts = " OR ".join("search_text LIKE ?" for _ in variants)
+        clauses.append(f"({or_parts})")
+        params.extend(f"%{v}%" for v in variants)
+
+    where_sql = " AND ".join(clauses)
 
     with get_connection() as conn:
         rows = conn.execute(
             f"""
             SELECT alim_code, name, group_name, kcal_per_100g
             FROM ciqual_foods
-            WHERE {where_clauses}
-            ORDER BY CASE WHEN search_text LIKE ? THEN 0 ELSE 1 END, LENGTH(name) ASC
-            LIMIT ?
+            WHERE {where_sql}
+            ORDER BY LENGTH(name) ASC
+            LIMIT 100
             """,
             params,
         ).fetchall()
 
+    # Classement simple : privilégie les noms qui commencent exactement par un des mots tapés
+    all_variants = [v for variants in word_variants_list for v in variants]
+
+    def _rank(row: sqlite3.Row) -> tuple:
+        nom_norm = ciqual.normalize_text(row["name"])
+        starts_exact = any(
+            nom_norm == v or nom_norm.startswith(f"{v},") or nom_norm.startswith(f"{v} ")
+            for v in all_variants
+        )
+        starts_prefix = any(nom_norm.startswith(v) for v in all_variants)
+        # Priorité 0 : commence par "mot," (ex: "Pomme, ...") ; 1 : commence par le mot ; 2 : ailleurs
+        starts_comma = any(nom_norm == v or nom_norm.startswith(f"{v},") for v in all_variants)
+        if starts_comma:
+            prio = 0
+        elif starts_exact:
+            prio = 1
+        elif starts_prefix:
+            prio = 2
+        else:
+            prio = 3
+        return (prio, len(row["name"]))
+
+    sorted_rows = sorted(rows, key=_rank)[:limit]
+
     results: List[Dict[str, Any]] = []
-    for row in rows:
+    for row in sorted_rows:
         grp = row["group_name"] or "Ciqual"
         results.append(
             {
@@ -273,6 +504,7 @@ def update_food_portion(food_id: int, portion_name: str, portion_grams: float) -
 
 
 def add_meal_entry(
+    user_id: int,
     entry_date: str,
     meal_type: str,
     food_id: Optional[int],
@@ -283,17 +515,18 @@ def add_meal_entry(
     grams_equivalent: float,
     kcal_calculated: float,
 ) -> Dict[str, Any]:
-    """Ajoute un aliment consommé dans un menu d'une journée donnée."""
+    """Ajoute un aliment consommé dans un menu d'une journée donnée pour cet utilisateur."""
     with get_connection() as conn:
         cursor = conn.execute(
             """
             INSERT INTO meal_entries (
-                entry_date, meal_type, food_id, food_name, food_brand,
+                user_id, entry_date, meal_type, food_id, food_name, food_brand,
                 unit, quantity, grams_equivalent, kcal_calculated
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 entry_date,
                 meal_type,
                 food_id,
@@ -311,21 +544,21 @@ def add_meal_entry(
     return dict(row)
 
 
-def get_day_summary(entry_date: str) -> Dict[str, Any]:
+def get_day_summary(entry_date: str, user_id: int) -> Dict[str, Any]:
     """
-    Récupère toutes les entrées d'une journée, regroupées par les 4 menus fixes,
+    Récupère toutes les entrées d'une journée pour un utilisateur, regroupées par les 4 menus fixes,
     ainsi que les sous-totaux par menu et le total global de la journée.
     """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, entry_date, meal_type, food_id, food_name, food_brand,
+            SELECT id, user_id, entry_date, meal_type, food_id, food_name, food_brand,
                    unit, quantity, grams_equivalent, kcal_calculated, created_at
             FROM meal_entries
-            WHERE entry_date = ?
+            WHERE entry_date = ? AND user_id = ?
             ORDER BY id ASC
             """,
-            (entry_date,),
+            (entry_date, user_id),
         ).fetchall()
 
     # On prépare la structure avec les 4 menus fixes même s'ils sont vides
@@ -351,25 +584,173 @@ def get_day_summary(entry_date: str) -> Dict[str, Any]:
     }
 
 
-def delete_meal_entry(entry_id: int) -> bool:
-    """Supprime une ligne de repas par son identifiant."""
+def update_meal_entry(
+    entry_id: int, new_quantity: float, new_meal_type: str, user_id: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Met à jour la quantité et/ou le menu d'une ligne de repas appartenant à l'utilisateur connecté,
+    et recalcule automatiquement les grammes équivalents et les calories.
+    """
     with get_connection() as conn:
-        cursor = conn.execute("DELETE FROM meal_entries WHERE id = ?", (entry_id,))
+        row = conn.execute(
+            "SELECT * FROM meal_entries WHERE id = ? AND user_id = ?",
+            (entry_id, user_id),
+        ).fetchone()
+        if not row:
+            return None
+        entry = dict(row)
+
+    new_quantity = float(new_quantity)
+    old_quantity = float(entry["quantity"])
+
+    # Recalcul des grammes et des calories à partir de la fiche aliment liée (ou proportionnellement)
+    food = get_food_by_id(entry["food_id"]) if entry.get("food_id") else None
+    if entry["unit"] == "g":
+        grams_equivalent = new_quantity
+    elif food and food.get("portion_grams"):
+        grams_equivalent = new_quantity * float(food["portion_grams"])
+    elif old_quantity > 0:
+        grams_equivalent = (new_quantity / old_quantity) * float(entry["grams_equivalent"])
+    else:
+        grams_equivalent = float(entry["grams_equivalent"])
+
+    if food:
+        kcal_calculated = (grams_equivalent / 100.0) * float(food["kcal_per_100g"])
+    elif old_quantity > 0:
+        kcal_calculated = (new_quantity / old_quantity) * float(entry["kcal_calculated"])
+    else:
+        kcal_calculated = float(entry["kcal_calculated"])
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE meal_entries
+            SET meal_type = ?, quantity = ?, grams_equivalent = ?, kcal_calculated = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                new_meal_type,
+                round(new_quantity, 2),
+                round(grams_equivalent, 2),
+                round(kcal_calculated, 1),
+                entry_id,
+                user_id,
+            ),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM meal_entries WHERE id = ? AND user_id = ?",
+            (entry_id, user_id),
+        ).fetchone()
+    return dict(updated) if updated else None
+
+
+def delete_meal_entry(entry_id: int, user_id: int) -> bool:
+    """Supprime une ligne de repas uniquement si elle appartient à l'utilisateur connecté."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM meal_entries WHERE id = ? AND user_id = ?",
+            (entry_id, user_id),
+        )
         conn.commit()
         return cursor.rowcount > 0
 
 
-def get_recent_history(limit: int = 30) -> List[Dict[str, Any]]:
-    """Retourne les jours enregistrés les plus récents avec leur total de calories."""
+def get_recent_history(user_id: int, limit: int = 30) -> List[Dict[str, Any]]:
+    """Retourne les jours enregistrés les plus récents pour cet utilisateur."""
     with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT entry_date, ROUND(SUM(kcal_calculated), 1) AS total_kcal, COUNT(*) AS items_count
             FROM meal_entries
+            WHERE user_id = ?
             GROUP BY entry_date
             ORDER BY entry_date DESC
             LIMIT ?
             """,
-            (limit,),
+            (user_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_partner_day_summary(entry_date: str, current_user_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Récupère les aliments enregistrés par l'autre utilisateur pour cette journée,
+    regroupés par menu, afin de pouvoir en copier un par un dans sa propre journée.
+    """
+    with get_connection() as conn:
+        partner = conn.execute(
+            "SELECT id, username FROM users WHERE id != ? ORDER BY id ASC LIMIT 1",
+            (current_user_id,),
+        ).fetchone()
+        if not partner:
+            return None
+
+        rows = conn.execute(
+            """
+            SELECT id, meal_type, food_name, food_brand, unit, quantity, grams_equivalent, kcal_calculated
+            FROM meal_entries
+            WHERE entry_date = ? AND user_id = ?
+            ORDER BY id ASC
+            """,
+            (entry_date, partner["id"]),
+        ).fetchall()
+
+    by_menu: Dict[str, List[Dict[str, Any]]] = {m: [] for m in MENUS_FIXES}
+    for row in rows:
+        item = dict(row)
+        meal = item["meal_type"]
+        if meal in by_menu:
+            by_menu[meal].append(item)
+
+    return {
+        "username": partner["username"],
+        "by_menu": by_menu,
+    }
+
+
+def copy_meal_entry(
+    source_entry_id: int,
+    target_user_id: int,
+    target_date: str,
+    target_meal_type: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Copie un aliment précis depuis le journal de l'autre utilisateur vers le menu
+    de l'utilisateur connecté (ajout à la suite, sans modifier la ligne d'origine).
+    """
+    with get_connection() as conn:
+        src = conn.execute(
+            "SELECT * FROM meal_entries WHERE id = ?",
+            (source_entry_id,),
+        ).fetchone()
+        if not src:
+            return None
+        source = dict(src)
+
+        meal_type = target_meal_type if target_meal_type in MENUS_FIXES else source["meal_type"]
+        cursor = conn.execute(
+            """
+            INSERT INTO meal_entries (
+                user_id, entry_date, meal_type, food_id, food_name, food_brand,
+                unit, quantity, grams_equivalent, kcal_calculated
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                target_user_id,
+                target_date,
+                meal_type,
+                source["food_id"],
+                source["food_name"],
+                source["food_brand"],
+                source["unit"],
+                source["quantity"],
+                source["grams_equivalent"],
+                source["kcal_calculated"],
+            ),
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM meal_entries WHERE id = ?", (new_id,)).fetchone()
+    return dict(row) if row else None

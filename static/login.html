@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CalorIA — Connexion</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="login-wrapper">
+    <section class="card login-card">
+      <h1>CalorIA</h1>
+      <p class="subtitle">Connectez-vous pour accéder à votre suivi personnel.</p>
+
+      <div id="no-users-msg" class="feedback hidden">
+        Aucun compte n'est encore configuré. Lancez <code>python3 users.py</code> dans le terminal pour créer les 2 comptes.
+      </div>
+
+      <div id="login-error" class="feedback error hidden"></div>
+
+      <form id="login-form" class="login-form">
+        <label>
+          Identifiant
+          <input id="username" type="text" autocomplete="username" required autofocus />
+        </label>
+        <label>
+          Mot de passe
+          <input id="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="btn btn-primary">Se connecter</button>
+      </form>
+    </section>
+  </div>
+
+  <script>
+    const form = document.getElementById("login-form");
+    const errorBox = document.getElementById("login-error");
+    const noUsersBox = document.getElementById("no-users-msg");
+
+    // Vérifie si au moins un compte existe déjà
+    fetch("/api/auth/status")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.has_users) {
+          noUsersBox.classList.remove("hidden");
+        }
+      })
+      .catch(() => {});
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorBox.classList.add("hidden");
+
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        errorBox.textContent = data.error || "Connexion impossible.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      window.location.href = "/";
+    });
+  </script>
+</body>
+</html>
