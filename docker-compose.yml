@@ -1,0 +1,11 @@
+# Lancement simple de CalorIA avec sauvegarde persistante de la base SQLite dans ./data
+services:
+  caloria:
+    build: .
+    container_name: caloria
+    ports:
+      - "8000:8000"
+    volumes:
+      # Le dossier local ./data est monté sur /app/data pour conserver caloria.db
+      - ./data:/app/data
+    restart: unless-stopped

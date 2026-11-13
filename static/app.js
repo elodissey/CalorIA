@@ -15,6 +15,7 @@ let currentDate = getLocalTodayISO();
 let localFoods = [];
 let ciqualFoods = [];
 let offFoods = [];
+let userFavorites = [];
 let selectedFood = null;
 
 // Récupération des éléments HTML principaux
@@ -35,6 +36,11 @@ const progressBarEl = document.getElementById("progress-bar");
 const legendGoalEl = document.getElementById("legend-goal");
 const legendRefEl = document.getElementById("legend-ref");
 
+// Section Favoris (Option A)
+const favoritesBarEl = document.getElementById("favorites-bar");
+const favoritesListEl = document.getElementById("favorites-list");
+const favoritesCountEl = document.getElementById("favorites-count");
+
 const searchForm = document.getElementById("search-form");
 const searchInput = document.getElementById("search-input");
 const offSearchBtn = document.getElementById("off-search-btn");
@@ -42,6 +48,7 @@ const searchFeedback = document.getElementById("search-feedback");
 const resultsContainer = document.getElementById("results-container");
 
 const selectedBox = document.getElementById("selected-box");
+const selectedFavBtn = document.getElementById("selected-fav-btn");
 const selectedNameEl = document.getElementById("selected-name");
 const selectedBrandEl = document.getElementById("selected-brand");
 const selectedKcalInfoEl = document.getElementById("selected-kcal-info");
@@ -58,7 +65,7 @@ const calcPreviewEl = document.getElementById("calc-preview");
 const manualDetails = document.getElementById("manual-details");
 const manualFoodForm = document.getElementById("manual-food-form");
 const mealsContainer = document.getElementById("meals-container");
-const historyListEl = document.getElementById("history-list");
+const historyChartEl = document.getElementById("history-chart");
 
 // ------------------------------------------------------------------
 // Utilitaires de dates et formatage
@@ -120,6 +127,7 @@ async function loadDay(dateStr) {
   renderSummary(data.total_kcal || 0);
   renderMeals(data.menus || [], data.partner || null);
   loadHistory();
+  loadFavorites();
 }
 
 function renderSummary(totalKcal) {
@@ -229,6 +237,23 @@ function renderMeals(menus, partner) {
         const kcalEl = document.createElement("strong");
         kcalEl.textContent = `${formatKcal(entry.kcal_calculated)} kcal`;
 
+        // Bouton Étoile Favori (Option A)
+        const isFav = Boolean(entry.is_favorite);
+        const favBtn = document.createElement("button");
+        favBtn.type = "button";
+        favBtn.className = `btn-fav ${isFav ? "active" : ""}`;
+        favBtn.title = isFav ? "Retirer de mes favoris" : "Ajouter à mes favoris";
+        favBtn.textContent = isFav ? "★" : "☆";
+        favBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await toggleFavorite({
+            food_id: entry.food_id,
+            default_meal: entry.meal_type,
+            default_qty: entry.quantity,
+            default_unit: entry.unit,
+          });
+        });
+
         const editBtn = document.createElement("button");
         editBtn.type = "button";
         editBtn.className = "btn-edit";
@@ -244,6 +269,7 @@ function renderMeals(menus, partner) {
         delBtn.addEventListener("click", () => deleteEntry(entry.id));
 
         actions.appendChild(kcalEl);
+        actions.appendChild(favBtn);
         actions.appendChild(editBtn);
         actions.appendChild(delBtn);
 
@@ -422,26 +448,498 @@ async function loadHistory() {
   const data = await response.json();
   const days = data.days || [];
 
-  historyListEl.innerHTML = "";
+  renderHistoryChart(days);
+}
+
+/**
+ * Dessine un graphique SVG simple de l'historique :
+ * - Axe X : les jours (du plus ancien au plus récent)
+ * - Axe Y : les calories (kcal)
+ * - Lignes vertes : objectif quotidien (GOAL_MIN et GOAL_MAX)
+ * - Ligne bleue : repère journalier (REF_KCAL)
+ * - Points orange : total de calories de chaque journée (cliquables)
+ */
+function renderHistoryChart(days) {
+  historyChartEl.innerHTML = "";
   if (days.length === 0) {
     const empty = document.createElement("span");
     empty.className = "empty-msg";
     empty.textContent = "Aucune journée enregistrée pour le moment.";
-    historyListEl.appendChild(empty);
+    historyChartEl.appendChild(empty);
     return;
   }
 
-  for (const day of days) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "history-chip";
-    if (day.entry_date === currentDate) {
-      btn.classList.add("active");
+  // Ordre chronologique de gauche à droite
+  const sorted = [...days].reverse();
+
+  const width = 760;
+  const height = 270;
+  const pad = { top: 24, right: 62, bottom: 42, left: 54 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+
+  // Échelle Y : inclut toujours 0, les repères et la valeur max enregistrée
+  const maxDay = Math.max(...sorted.map((d) => Number(d.total_kcal) || 0), 0);
+  const rawMax = Math.max(REF_KCAL, GOAL_MAX, maxDay) * 1.12;
+  const yMax = Math.ceil(rawMax / 250) * 250;
+
+  const yPos = (kcal) => pad.top + plotH - (Math.max(0, kcal) / yMax) * plotH;
+  const xPos = (idx) => {
+    if (sorted.length === 1) return pad.left + plotW / 2;
+    return pad.left + (idx / (sorted.length - 1)) * plotW;
+  };
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, text = "") => {
+    const node = document.createElementNS(svgNS, tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      node.setAttribute(k, String(v));
     }
-    btn.textContent = `${day.entry_date} · ${formatKcal(day.total_kcal)} kcal`;
-    btn.addEventListener("click", () => loadDay(day.entry_date));
-    historyListEl.appendChild(btn);
+    if (text) node.textContent = text;
+    return node;
+  };
+
+  const svg = el("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    class: "history-svg",
+    role: "img",
+    "aria-label": "Graphique des calories par jour",
+  });
+
+  // Grille horizontale Y (tous les 500 kcal)
+  for (let val = 0; val <= yMax; val += 500) {
+    const y = yPos(val);
+    svg.appendChild(
+      el("line", {
+        x1: pad.left,
+        y1: y,
+        x2: width - pad.right,
+        y2: y,
+        stroke: "#e5e7eb",
+        "stroke-width": 1,
+      })
+    );
+    svg.appendChild(
+      el(
+        "text",
+        {
+          x: pad.left - 8,
+          y: y + 4,
+          "text-anchor": "end",
+          "font-size": "11",
+          fill: "#6b7280",
+        },
+        formatKcal(val)
+      )
+    );
   }
+
+  // Bande verte translucide entre GOAL_MIN et GOAL_MAX
+  const yGoalTop = yPos(GOAL_MAX);
+  const yGoalBot = yPos(GOAL_MIN);
+  svg.appendChild(
+    el("rect", {
+      x: pad.left,
+      y: yGoalTop,
+      width: plotW,
+      height: Math.max(1, yGoalBot - yGoalTop),
+      fill: "rgba(22, 163, 74, 0.12)",
+    })
+  );
+
+  // Lignes de repère vertes (objectif quotidien min et max)
+  for (const [gVal, dy] of [
+    [GOAL_MAX, -3],
+    [GOAL_MIN, 11],
+  ]) {
+    const yg = yPos(gVal);
+    svg.appendChild(
+      el("line", {
+        x1: pad.left,
+        y1: yg,
+        x2: width - pad.right,
+        y2: yg,
+        stroke: "#16a34a",
+        "stroke-width": 1.6,
+        "stroke-dasharray": "5 4",
+      })
+    );
+    svg.appendChild(
+      el(
+        "text",
+        {
+          x: width - pad.right + 6,
+          y: yg + dy,
+          "font-size": "10.5",
+          "font-weight": "600",
+          fill: "#15803d",
+        },
+        formatKcal(gVal)
+      )
+    );
+  }
+
+  // Ligne de repère bleue (repère journalier REF_KCAL)
+  const yRef = yPos(REF_KCAL);
+  svg.appendChild(
+    el("line", {
+      x1: pad.left,
+      y1: yRef,
+      x2: width - pad.right,
+      y2: yRef,
+      stroke: "#2563eb",
+      "stroke-width": 2,
+    })
+  );
+  svg.appendChild(
+    el(
+      "text",
+      {
+        x: width - pad.right + 6,
+        y: yRef + 4,
+        "font-size": "11",
+        "font-weight": "700",
+        fill: "#1d4ed8",
+      },
+      formatKcal(REF_KCAL)
+    )
+  );
+
+  // Axes X et Y principaux
+  svg.appendChild(
+    el("line", {
+      x1: pad.left,
+      y1: pad.top,
+      x2: pad.left,
+      y2: pad.top + plotH,
+      stroke: "#9ca3af",
+      "stroke-width": 1.2,
+    })
+  );
+  svg.appendChild(
+    el("line", {
+      x1: pad.left,
+      y1: pad.top + plotH,
+      x2: width - pad.right,
+      y2: pad.top + plotH,
+      stroke: "#9ca3af",
+      "stroke-width": 1.2,
+    })
+  );
+
+  // Courbe orange reliant les points s'il y a au moins 2 jours
+  if (sorted.length >= 2) {
+    const pts = sorted.map((d, i) => `${xPos(i)},${yPos(d.total_kcal)}`).join(" ");
+    svg.appendChild(
+      el("polyline", {
+        points: pts,
+        fill: "none",
+        stroke: "#fb923c",
+        "stroke-width": 2.2,
+      })
+    );
+  }
+
+  // Points orange pour chaque journée + étiquettes sur l'axe X
+  const labelStep = Math.max(1, Math.ceil(sorted.length / 10));
+  sorted.forEach((day, idx) => {
+    const cx = xPos(idx);
+    const cy = yPos(day.total_kcal);
+    const isCurrent = day.entry_date === currentDate;
+    const [, mm, dd] = day.entry_date.split("-");
+
+    const group = el("g", { class: "chart-point" });
+    group.appendChild(
+      el("title", {}, `${day.entry_date} : ${formatKcal(day.total_kcal)} kcal (cliquer pour ouvrir)`)
+    );
+
+    // Halo discret sur le jour sélectionné
+    if (isCurrent) {
+      group.appendChild(
+        el("circle", {
+          cx,
+          cy,
+          r: 10,
+          fill: "rgba(249, 115, 22, 0.25)",
+        })
+      );
+    }
+
+    // Point orange du jour
+    group.appendChild(
+      el("circle", {
+        cx,
+        cy,
+        r: isCurrent ? 6.5 : 5,
+        fill: "#f97316",
+        stroke: "#ffffff",
+        "stroke-width": 2,
+      })
+    );
+
+    // Valeur affichée au-dessus du point si peu de jours ou jour sélectionné
+    if (sorted.length <= 12 || isCurrent) {
+      group.appendChild(
+        el(
+          "text",
+          {
+            x: cx,
+            y: cy - 10,
+            "text-anchor": "middle",
+            "font-size": "10.5",
+            "font-weight": isCurrent ? "700" : "600",
+            fill: "#c2410c",
+          },
+          formatKcal(day.total_kcal)
+        )
+      );
+    }
+
+    group.addEventListener("click", () => loadDay(day.entry_date));
+    svg.appendChild(group);
+
+    // Étiquette date (JJ/MM) sur l'axe X sans chevauchement
+    if (idx % labelStep === 0 || idx === sorted.length - 1 || isCurrent) {
+      svg.appendChild(
+        el(
+          "text",
+          {
+            x: cx,
+            y: pad.top + plotH + 18,
+            "text-anchor": "middle",
+            "font-size": "11",
+            "font-weight": isCurrent ? "700" : "400",
+            fill: isCurrent ? "#c2410c" : "#4b5563",
+          },
+          `${dd}/${mm}`
+        )
+      );
+    }
+  });
+
+  historyChartEl.appendChild(svg);
+
+  const hint = document.createElement("p");
+  hint.className = "chart-hint";
+  hint.textContent = "Cliquez sur un point orange pour afficher le détail de cette journée.";
+  historyChartEl.appendChild(hint);
+}
+
+// ------------------------------------------------------------------
+// Gestion des Favoris (Option A - Étoiles et accès rapide)
+// ------------------------------------------------------------------
+
+/** Charge la liste des favoris de l'utilisateur depuis l'API. */
+async function loadFavorites() {
+  try {
+    const response = await fetch("/api/favorites");
+    if (!response.ok) return;
+    const data = await response.json();
+    userFavorites = data.favorites || [];
+    renderFavorites();
+    updateSelectedFavButton();
+  } catch (err) {
+    console.error("Erreur chargement favoris:", err);
+  }
+}
+
+/** Affiche les favoris sous forme de badges rapides cliquables. */
+function renderFavorites() {
+  if (!favoritesListEl) return;
+  favoritesListEl.innerHTML = "";
+
+  if (userFavorites.length === 0) {
+    if (favoritesCountEl) favoritesCountEl.textContent = "(0)";
+    const empty = document.createElement("span");
+    empty.className = "favorites-empty";
+    empty.textContent = "Aucun favori pour le moment. Cliquez sur l'étoile ☆ à côté d'un aliment dans vos repas pour l'épingler ici !";
+    favoritesListEl.appendChild(empty);
+    return;
+  }
+
+  if (favoritesCountEl) favoritesCountEl.textContent = `(${userFavorites.length})`;
+
+  for (const fav of userFavorites) {
+    const chip = document.createElement("div");
+    chip.className = "favorite-chip";
+    chip.title = "Cliquer pour pré-remplir le formulaire, ou sur le bouton + pour ajouter directement.";
+
+    // Nom de l'aliment
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "favorite-chip-name";
+    nameSpan.textContent = fav.brand ? `${fav.name} (${fav.brand})` : fav.name;
+
+    // Métadonnées (portion habituelle + repas habituel)
+    const metaSpan = document.createElement("span");
+    metaSpan.className = "favorite-chip-meta";
+    const parts = [];
+    if (fav.default_qty) {
+      parts.push(`${fav.default_qty} ${fav.default_unit === "portion" ? "portion(s)" : "g"}`);
+    }
+    if (fav.default_meal) {
+      parts.push(fav.default_meal);
+    }
+    metaSpan.textContent = parts.length > 0 ? `· ${parts.join(" · ")}` : "";
+
+    // Bouton "+" pour ajout direct en 1 clic au repas du jour
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "favorite-chip-add";
+    addBtn.textContent = "+";
+    addBtn.title = `Ajouter directement à ${fav.default_meal || "ce jour"} (+1 clic)`;
+    addBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await addFavoriteDirect(fav);
+    });
+
+    // Bouton "×" pour retirer des favoris
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "favorite-chip-del";
+    delBtn.textContent = "×";
+    delBtn.title = "Retirer des favoris";
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await removeFavorite(fav.fav_id);
+    });
+
+    // Un clic sur la puce elle-même pré-remplit le formulaire d'ajout
+    chip.addEventListener("click", () => {
+      selectFavorite(fav);
+    });
+
+    chip.appendChild(nameSpan);
+    if (metaSpan.textContent) chip.appendChild(metaSpan);
+    chip.appendChild(addBtn);
+    chip.appendChild(delBtn);
+
+    favoritesListEl.appendChild(chip);
+  }
+}
+
+/** Pré-remplit le formulaire d'ajout avec cet aliment favori. */
+function selectFavorite(fav) {
+  const foodObj = {
+    id: fav.food_id,
+    name: fav.name,
+    brand: fav.brand,
+    kcal_per_100g: fav.kcal_per_100g,
+    portion_name: fav.portion_name,
+    portion_grams: fav.portion_grams,
+    source: fav.source,
+    external_code: fav.external_code,
+  };
+  selectFood(foodObj);
+
+  if (fav.default_meal) {
+    mealSelect.value = fav.default_meal;
+  }
+  if (fav.default_unit) {
+    unitSelect.value = fav.default_unit;
+  }
+  if (fav.default_qty) {
+    qtyInput.value = String(fav.default_qty);
+  }
+  updatePreview();
+  selectedBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/** Ajoute immédiatement un aliment favori au menu du jour en 1 clic. */
+async function addFavoriteDirect(fav) {
+  const meal = fav.default_meal || mealSelect.value || "Petit-déjeuner";
+  const unit = fav.default_unit || "g";
+  const qty = fav.default_qty || 100;
+
+  try {
+    const response = await fetch("/api/entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        food_id: fav.food_id,
+        meal_type: meal,
+        unit: unit,
+        quantity: qty,
+        entry_date: currentDate,
+      }),
+    });
+    if (response.ok) {
+      showFeedback(`Ajouté à ${meal} : ${fav.name} (${qty} ${unit === "portion" ? "portion" : "g"})`);
+      loadDay(currentDate);
+    } else {
+      const err = await response.json();
+      showFeedback(err.error || "Erreur lors de l'ajout.", true);
+    }
+  } catch (err) {
+    showFeedback("Erreur de communication avec le serveur.", true);
+  }
+}
+
+/** Bascule un aliment en favori (ajout ou suppression). */
+async function toggleFavorite(payload) {
+  try {
+    const response = await fetch("/api/favorites/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      userFavorites = data.favorites || [];
+      renderFavorites();
+
+      // Met à jour la liste des repas du jour pour synchroniser les étoiles
+      const dayResp = await fetch(`/api/day?date=${encodeURIComponent(currentDate)}`);
+      if (dayResp.ok) {
+        const dayData = await dayResp.json();
+        renderMeals(dayData.menus || [], dayData.partner || null);
+      }
+
+      updateSelectedFavButton();
+
+      if (searchInput.value.trim()) {
+        loadLocalFoods(searchInput.value.trim());
+      }
+      return data.is_favorite;
+    }
+  } catch (err) {
+    console.error("Erreur toggle favori:", err);
+  }
+  return false;
+}
+
+/** Supprime un favori par son identifiant de favori. */
+async function removeFavorite(favId) {
+  try {
+    const response = await fetch(`/api/favorites/${favId}`, { method: "DELETE" });
+    if (response.ok) {
+      const data = await response.json();
+      userFavorites = data.favorites || [];
+      renderFavorites();
+
+      const dayResp = await fetch(`/api/day?date=${encodeURIComponent(currentDate)}`);
+      if (dayResp.ok) {
+        const dayData = await dayResp.json();
+        renderMeals(dayData.menus || [], dayData.partner || null);
+      }
+      updateSelectedFavButton();
+    }
+  } catch (err) {
+    console.error("Erreur suppression favori:", err);
+  }
+}
+
+/** Met à jour l'étoile dans le panneau de produit sélectionné. */
+function updateSelectedFavButton() {
+  if (!selectedFavBtn || !selectedFood) return;
+  const isFav = userFavorites.some((fav) => {
+    if (selectedFood.id && fav.food_id === selectedFood.id) return true;
+    if (fav.name.toLowerCase() === selectedFood.name.toLowerCase() && (fav.brand || "") === (selectedFood.brand || "")) return true;
+    return false;
+  });
+
+  selectedFavBtn.textContent = isFav ? "★" : "☆";
+  selectedFavBtn.classList.toggle("active", isFav);
+  selectedFavBtn.title = isFav ? "Retirer de mes favoris" : "Ajouter à mes favoris";
 }
 
 // ------------------------------------------------------------------
@@ -520,7 +1018,9 @@ function appendResultGroup(groupTitle, items) {
     const left = document.createElement("div");
     const name = document.createElement("div");
     name.className = "result-name";
-    name.textContent = item.name;
+
+    const isFav = Boolean(item.is_favorite) || (item.id && userFavorites.some((f) => f.food_id === item.id));
+    name.textContent = `${isFav ? "⭐ " : ""}${item.name}`;
 
     const meta = document.createElement("div");
     meta.className = "result-meta";
@@ -550,6 +1050,7 @@ function selectFood(food) {
   selectedFood = food;
   selectedNameEl.textContent = food.name;
   selectedBrandEl.textContent = food.brand ? ` (${food.brand})` : "";
+  updateSelectedFavButton();
 
   let info = `${food.kcal_per_100g} kcal pour 100 g`;
   if (food.portion_grams) {
@@ -572,6 +1073,7 @@ function selectFood(food) {
 function clearSelection() {
   selectedFood = null;
   selectedBox.classList.add("hidden");
+  updateSelectedFavButton();
 }
 
 function updatePreview() {
@@ -715,6 +1217,20 @@ manualFoodForm.addEventListener("submit", async (e) => {
   selectFood(data.food);
 });
 
+// Étoile de favori dans le formulaire du produit sélectionné
+if (selectedFavBtn) {
+  selectedFavBtn.addEventListener("click", async () => {
+    if (!selectedFood) return;
+    await toggleFavorite({
+      food_id: selectedFood.id || null,
+      food: selectedFood.id ? null : selectedFood,
+      default_meal: mealSelect.value,
+      default_qty: parseFloat(qtyInput.value) || 100,
+      default_unit: unitSelect.value,
+    });
+  });
+}
+
 // Déconnexion
 logoutBtn.addEventListener("click", async () => {
   await fetch("/api/logout", { method: "POST" });
@@ -749,6 +1265,93 @@ async function initApp() {
 
   loadDay(currentDate);
   loadLocalFoods("");
+  loadFavorites();
+  startMascotAnimation();
+}
+
+/**
+ * Anime aléatoirement le petit robot extrait du logo sur l'écran :
+ * déplacements fluides, petits sauts et bulle de message au clic.
+ */
+function startMascotAnimation() {
+  const bot = document.getElementById("mascot-bot");
+  const bubble = document.getElementById("mascot-bubble");
+  if (!bot || !bubble) return;
+
+  const messages = [
+    "Coucou !",
+    "Bon appétit !",
+    "Pense à boire de l'eau !",
+    "Un fruit ou une tisane ?",
+    "Super suivi aujourd'hui !",
+    "Bravo pour ta régularité !",
+    "Un clic sur tes favoris ⭐ ?",
+  ];
+  let currentX = 24;
+  let bubbleTimer = null;
+
+  function showBubble(text) {
+    bubble.textContent = text;
+    bubble.classList.remove("hidden");
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => bubble.classList.add("hidden"), 2600);
+  }
+
+  function moveRandomly() {
+    const margin = 18;
+    const maxW = Math.max(100, window.innerWidth - 96);
+    const maxH = Math.max(100, window.innerHeight - 105);
+
+    // Favorise les bords/coins 70% du temps pour ne pas gêner la lecture centrale
+    let targetX;
+    let targetY;
+    if (Math.random() < 0.7) {
+      targetX = Math.random() < 0.5 ? margin : maxW - margin;
+      targetY = margin + Math.random() * (maxH - margin);
+    } else {
+      targetX = margin + Math.random() * (maxW - margin);
+      targetY = margin + Math.random() * (maxH - margin);
+    }
+
+    bot.classList.toggle("facing-left", targetX < currentX);
+    currentX = targetX;
+    bot.style.left = `${Math.round(targetX)}px`;
+    bot.style.top = `${Math.round(targetY)}px`;
+
+    // Petit saut aléatoire de temps en temps à l'arrivée
+    if (Math.random() < 0.45) {
+      setTimeout(() => {
+        bot.classList.remove("hopping");
+        void bot.offsetWidth;
+        bot.classList.add("hopping");
+      }, 2800);
+    }
+  }
+
+  function scheduleNextMove() {
+    const delay = 4500 + Math.random() * 4500;
+    setTimeout(() => {
+      moveRandomly();
+      if (Math.random() < 0.25) {
+        const msg = messages[Math.floor(Math.random() * messages.length)];
+        showBubble(msg);
+      }
+      scheduleNextMove();
+    }, delay);
+  }
+
+  bot.addEventListener("click", () => {
+    bot.classList.remove("hopping");
+    void bot.offsetWidth;
+    bot.classList.add("hopping");
+    const msg = messages[Math.floor(Math.random() * messages.length)];
+    showBubble(msg);
+    setTimeout(moveRandomly, 350);
+  });
+
+  // Premier petit déplacement peu après l'ouverture
+  setTimeout(moveRandomly, 1800);
+  scheduleNextMove();
 }
 
 // Initialisation au chargement de la page

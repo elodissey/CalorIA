@@ -1,0 +1,19 @@
+# Ne jamais copier votre base personnelle ou historique Git dans l'image Docker
+caloria.db
+caloria.db-shm
+caloria.db-wal
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+.git/
+.gitignore
+Status.md
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+.DS_Store

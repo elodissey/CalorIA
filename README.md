@@ -19,13 +19,25 @@ Application web locale et légère en Python pour suivre simplement les calories
 
 ## Lancement
 
+### En local (Python)
+
 ```bash
 git clone https://github.com/elodissey/CalorIA.git
 cd CalorIA
+python3 users.py   # crée les 2 comptes autorisés
 python3 app.py
 ```
 
 Ouvrez ensuite [http://127.0.0.1:8000](http://127.0.0.1:8000) dans votre navigateur.
+
+### Avec Docker (pour déployer facilement sur un serveur)
+
+```bash
+docker compose up -d --build
+docker exec -it caloria python3 users.py   # crée les 2 comptes dans ./data/caloria.db
+```
+
+La base SQLite est conservée durablement dans le dossier `./data` (monté sur `/app/data` dans le conteneur).
 
 Au premier démarrage, la base locale `caloria.db` est créée automatiquement.
 

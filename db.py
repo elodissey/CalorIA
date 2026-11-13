@@ -31,6 +31,10 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     """Crée les tables si elles n'existent pas encore (base vide au démarrage)."""
+    # Crée le dossier parent de la base si besoin (utile dans Docker avec /app/data/caloria.db)
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     with get_connection() as conn:
         # Table 1 : Catalogue des aliments enregistrés localement
         # (soit créés manuellement, soit mémorisés depuis Open Food Facts)
@@ -122,6 +126,27 @@ def init_db() -> None:
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """
+        )
+
+        # Table 6 : Aliments favoris par utilisateur (Option A - Étoiles favoris)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                food_id INTEGER NOT NULL,
+                default_meal TEXT DEFAULT NULL,
+                default_qty REAL DEFAULT 100,
+                default_unit TEXT DEFAULT 'g',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
+                UNIQUE(user_id, food_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id)"
         )
         conn.commit()
 
@@ -389,29 +414,47 @@ def search_ciqual_foods(query: str, limit: int = 40) -> List[Dict[str, Any]]:
     return results
 
 
-def search_local_foods(query: str = "") -> List[Dict[str, Any]]:
-    """Recherche des aliments dans le catalogue local (tous si query est vide)."""
+def search_local_foods(query: str = "", user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Recherche des aliments dans le catalogue local (tous si query est vide).
+    Si un user_id est fourni, indique si l'aliment est dans ses favoris (is_favorite)
+    et remonte les favoris en tête de liste.
+    """
     with get_connection() as conn:
+        if user_id:
+            join_clause = "LEFT JOIN favorites f ON f.food_id = foods.id AND f.user_id = ?"
+            select_extra = ", CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite"
+            user_param: tuple = (user_id,)
+        else:
+            join_clause = ""
+            select_extra = ", 0 AS is_favorite"
+            user_param = ()
+
         if query.strip():
             motif = f"%{query.strip()}%"
             rows = conn.execute(
-                """
-                SELECT id, name, brand, kcal_per_100g, portion_name, portion_grams, source, external_code
+                f"""
+                SELECT foods.id, foods.name, foods.brand, foods.kcal_per_100g, foods.portion_name,
+                       foods.portion_grams, foods.source, foods.external_code{select_extra}
                 FROM foods
-                WHERE name LIKE ? OR brand LIKE ?
-                ORDER BY id DESC
+                {join_clause}
+                WHERE foods.name LIKE ? OR foods.brand LIKE ?
+                ORDER BY is_favorite DESC, foods.id DESC
                 LIMIT 50
                 """,
-                (motif, motif),
+                user_param + (motif, motif),
             ).fetchall()
         else:
             rows = conn.execute(
-                """
-                SELECT id, name, brand, kcal_per_100g, portion_name, portion_grams, source, external_code
+                f"""
+                SELECT foods.id, foods.name, foods.brand, foods.kcal_per_100g, foods.portion_name,
+                       foods.portion_grams, foods.source, foods.external_code{select_extra}
                 FROM foods
-                ORDER BY id DESC
+                {join_clause}
+                ORDER BY is_favorite DESC, foods.id DESC
                 LIMIT 50
-                """
+                """,
+                user_param,
             ).fetchall()
     return [dict(row) for row in rows]
 
@@ -548,15 +591,18 @@ def get_day_summary(entry_date: str, user_id: int) -> Dict[str, Any]:
     """
     Récupère toutes les entrées d'une journée pour un utilisateur, regroupées par les 4 menus fixes,
     ainsi que les sous-totaux par menu et le total global de la journée.
+    Indique aussi pour chaque entrée si l'aliment est dans les favoris de l'utilisateur (is_favorite).
     """
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, user_id, entry_date, meal_type, food_id, food_name, food_brand,
-                   unit, quantity, grams_equivalent, kcal_calculated, created_at
-            FROM meal_entries
-            WHERE entry_date = ? AND user_id = ?
-            ORDER BY id ASC
+            SELECT me.id, me.user_id, me.entry_date, me.meal_type, me.food_id, me.food_name, me.food_brand,
+                   me.unit, me.quantity, me.grams_equivalent, me.kcal_calculated, me.created_at,
+                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite
+            FROM meal_entries me
+            LEFT JOIN favorites f ON f.food_id = me.food_id AND f.user_id = me.user_id
+            WHERE me.entry_date = ? AND me.user_id = ?
+            ORDER BY me.id ASC
             """,
             (entry_date, user_id),
         ).fetchall()
@@ -754,3 +800,95 @@ def copy_meal_entry(
         new_id = cursor.lastrowid
         row = conn.execute("SELECT * FROM meal_entries WHERE id = ?", (new_id,)).fetchone()
     return dict(row) if row else None
+
+
+# ------------------------------------------------------------------
+# Gestion des favoris personnels (Option A - Étoiles favoris)
+# ------------------------------------------------------------------
+
+def list_favorites(user_id: int) -> List[Dict[str, Any]]:
+    """
+    Retourne la liste des aliments favoris d'un utilisateur, ordonnée par date d'ajout décroissante.
+    Inclut les informations complètes de l'aliment (nom, marque, kcal, portions).
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT f.id AS fav_id, f.user_id, f.food_id, f.default_meal, f.default_qty, f.default_unit,
+                   f.created_at AS fav_created_at,
+                   fd.name, fd.brand, fd.kcal_per_100g, fd.portion_name, fd.portion_grams,
+                   fd.source, fd.external_code
+            FROM favorites f
+            JOIN foods fd ON fd.id = f.food_id
+            WHERE f.user_id = ?
+            ORDER BY f.id DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_user_favorite_food_ids(user_id: int) -> List[int]:
+    """Retourne la liste des identifiants d'aliments (food_id) mis en favoris par l'utilisateur."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT food_id FROM favorites WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    return [int(r["food_id"]) for r in rows]
+
+
+def toggle_favorite(
+    user_id: int,
+    food_id: int,
+    default_meal: Optional[str] = None,
+    default_qty: float = 100.0,
+    default_unit: str = "g",
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Bascule l'état d'un aliment en favori pour un utilisateur :
+    - Si l'aliment est déjà dans ses favoris : le retire et renvoie (False, None).
+    - S'il n'y est pas : l'ajoute avec ses valeurs de portion/menu par défaut et renvoie (True, favori).
+    """
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT * FROM favorites WHERE user_id = ? AND food_id = ? LIMIT 1",
+            (user_id, food_id),
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                "DELETE FROM favorites WHERE id = ?",
+                (existing["id"],),
+            )
+            conn.commit()
+            return False, None
+
+        # Nettoyage et sécurisation des valeurs par défaut
+        safe_meal = default_meal if default_meal in MENUS_FIXES else None
+        safe_unit = "portion" if default_unit == "portion" else "g"
+        safe_qty = max(0.01, float(default_qty or 100.0))
+
+        cursor = conn.execute(
+            """
+            INSERT INTO favorites (user_id, food_id, default_meal, default_qty, default_unit)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, food_id, safe_meal, safe_qty, safe_unit),
+        )
+        conn.commit()
+        fav_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM favorites WHERE id = ?", (fav_id,)).fetchone()
+        return True, dict(row) if row else None
+
+
+def remove_favorite(fav_id: int, user_id: int) -> bool:
+    """Supprime un favori précis appartenant à l'utilisateur connecté."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM favorites WHERE id = ? AND user_id = ?",
+            (int(fav_id), int(user_id)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+

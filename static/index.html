@@ -8,10 +8,10 @@
 </head>
 <body>
   <div class="container">
-    <!-- En-tête : titre, utilisateur connecté et navigation par date -->
+    <!-- En-tête : logo, utilisateur connecté et navigation par date -->
     <header class="header">
-      <div>
-        <h1>CalorIA</h1>
+      <div class="brand-block">
+        <img src="/static/logo.png" alt="Logo CalorIA" class="brand-logo" />
         <p class="subtitle">Suivi simple des calories par jour et par menu</p>
       </div>
       <div class="header-right">
@@ -70,6 +70,17 @@
       <section class="card add-panel">
         <h2>Ajouter un aliment</h2>
 
+        <!-- Section Mes favoris (Option A - Accès rapide 1 clic) -->
+        <div id="favorites-bar" class="favorites-bar">
+          <div class="favorites-header">
+            <span class="favorites-title">⭐ Mes favoris</span>
+            <span id="favorites-count" class="favorites-count muted small"></span>
+          </div>
+          <div id="favorites-list" class="favorites-list">
+            <!-- Rempli dynamiquement par app.js -->
+          </div>
+        </div>
+
         <!-- Barre de recherche (filtre local + recherche Open Food Facts) -->
         <form id="search-form" class="search-bar">
           <input
@@ -94,10 +105,13 @@
         <!-- Formulaire affiché quand un produit est sélectionné dans la liste -->
         <div id="selected-box" class="selected-box hidden">
           <div class="selected-header">
-            <div>
-              <strong id="selected-name"></strong>
-              <span id="selected-brand" class="muted"></span>
-              <div id="selected-kcal-info" class="muted small"></div>
+            <div class="selected-title-group">
+              <button id="selected-fav-btn" type="button" class="btn-fav" title="Ajouter à mes favoris">☆</button>
+              <div>
+                <strong id="selected-name"></strong>
+                <span id="selected-brand" class="muted"></span>
+                <div id="selected-kcal-info" class="muted small"></div>
+              </div>
             </div>
             <button id="clear-selected" type="button" class="btn-link">Changer</button>
           </div>
@@ -180,11 +194,24 @@
       </section>
     </main>
 
-    <!-- Historique des journées précédentes -->
+    <!-- Historique graphique des journées précédentes -->
     <section class="card history-card">
-      <h2>Historique des journées enregistrées</h2>
-      <div id="history-list" class="history-list"></div>
+      <div class="history-header">
+        <h2>Historique des journées enregistrées</h2>
+        <div class="chart-legend">
+          <span><i class="legend-dot dot-orange"></i> Calories du jour</span>
+          <span><i class="legend-line line-green"></i> Objectif quotidien</span>
+          <span><i class="legend-line line-blue"></i> Repère journalier</span>
+        </div>
+      </div>
+      <div id="history-chart" class="history-chart"></div>
     </section>
+  </div>
+
+  <!-- Petit robot compagnon extrait du logo, animé aléatoirement -->
+  <div id="mascot-bot" class="mascot-bot" title="Cliquez sur moi !">
+    <div id="mascot-bubble" class="mascot-bubble hidden"></div>
+    <img src="/static/robot.png" alt="Petit robot CalorIA" class="mascot-img" />
   </div>
 
   <script src="/static/app.js"></script>

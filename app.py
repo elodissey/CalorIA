@@ -129,9 +129,18 @@ class CalorIAHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"has_users": db.count_users() > 0})
             return
 
-        # CSS nécessaire aussi pour la page /login
+        # CSS et logo nécessaires aussi pour la page /login
         if path == "/static/style.css":
             self._send_file(os.path.join(STATIC_DIR, "style.css"))
+            return
+
+        if path in ("/static/logo.png", "/Logo_CalorIA.jpeg"):
+            target = (
+                os.path.join(STATIC_DIR, "logo.png")
+                if path == "/static/logo.png"
+                else os.path.join(BASE_DIR, "Logo_CalorIA.jpeg")
+            )
+            self._send_file(target)
             return
 
         # Page d'accueil protégée : redirige vers /login si non connecté
@@ -186,10 +195,15 @@ class CalorIAHandler(BaseHTTPRequestHandler):
             self._send_json(
                 200,
                 {
-                    "foods": db.search_local_foods(query),
+                    "foods": db.search_local_foods(query, user["id"]),
                     "ciqual": ciqual_results,
                 },
             )
+            return
+
+        # Liste des favoris de l'utilisateur connecté (Option A)
+        if path == "/api/favorites":
+            self._send_json(200, {"favorites": db.list_favorites(user["id"])})
             return
 
         # Recherche en direct sur Open Food Facts
@@ -241,6 +255,60 @@ class CalorIAHandler(BaseHTTPRequestHandler):
         # Routes protégées ci-dessous
         user = self._require_api_user()
         if not user:
+            return
+
+        # Basculer un aliment en favori (Option A - Étoile)
+        if path == "/api/favorites/toggle":
+            food_id = data.get("food_id")
+
+            # Si l'aliment n'a pas encore d'ID local (ex: issu de Ciqual ou Open Food Facts),
+            # on l'enregistre d'abord dans le catalogue partagé
+            if not food_id and isinstance(data.get("food"), dict):
+                f_data = data["food"]
+                try:
+                    kcal_100 = float(f_data.get("kcal_per_100g"))
+                except (TypeError, ValueError):
+                    self._send_json(400, {"error": "Valeur calorique invalide."})
+                    return
+
+                saved = db.save_food(
+                    name=str(f_data.get("name", "")).strip() or "Produit",
+                    brand=str(f_data.get("brand", "")).strip(),
+                    kcal_per_100g=kcal_100,
+                    portion_name=str(f_data.get("portion_name", "")).strip(),
+                    portion_grams=f_data.get("portion_grams"),
+                    source=str(f_data.get("source", "manuel")),
+                    external_code=f_data.get("external_code"),
+                )
+                food_id = saved["id"]
+
+            if not food_id:
+                self._send_json(400, {"error": "Identifiant d'aliment manquant."})
+                return
+
+            default_meal = data.get("default_meal")
+            raw_qty = data.get("default_qty")
+            try:
+                default_qty = float(raw_qty) if raw_qty else 100.0
+            except (TypeError, ValueError):
+                default_qty = 100.0
+            default_unit = str(data.get("default_unit", "g")).strip()
+
+            is_fav, fav_record = db.toggle_favorite(
+                user_id=user["id"],
+                food_id=int(food_id),
+                default_meal=default_meal,
+                default_qty=default_qty,
+                default_unit=default_unit,
+            )
+            self._send_json(
+                200,
+                {
+                    "is_favorite": is_fav,
+                    "favorite": fav_record,
+                    "favorites": db.list_favorites(user["id"]),
+                },
+            )
             return
 
         # Créer un aliment manuellement dans le catalogue local
@@ -475,6 +543,22 @@ class CalorIAHandler(BaseHTTPRequestHandler):
                 return
 
             self._send_json(200, {"deleted": True})
+            return
+
+        if path.startswith("/api/favorites/"):
+            raw_id = path[len("/api/favorites/"):].strip("/")
+            try:
+                fav_id = int(raw_id)
+            except ValueError:
+                self._send_json(400, {"error": "Identifiant invalide."})
+                return
+
+            deleted = db.remove_favorite(fav_id, user["id"])
+            if not deleted:
+                self._send_json(404, {"error": "Favori introuvable."})
+                return
+
+            self._send_json(200, {"deleted": True, "favorites": db.list_favorites(user["id"])})
             return
 
         self._send_json(404, {"error": "Route inconnue."})
